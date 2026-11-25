@@ -1,0 +1,149 @@
+#include "Actions.hpp"
+#include "utils.hpp"
+
+struct ControleVitesse {
+    int8_t minVitesse;
+    int8_t maxVitesse;
+    float acceleration;
+    float debutAcceleration;
+
+    constexpr ControleVitesse(
+        int8_t minVitesse,
+        int8_t maxVitesse,
+        float acceleration,
+        float debutAcceleration
+    )
+      : minVitesse(minVitesse)
+      , maxVitesse(maxVitesse)
+      , acceleration(acceleration)
+      , debutAcceleration(debutAcceleration) {}
+
+    int8_t obtenirVitesse(US tempsAppuie) const{
+        const float valeur =
+            ceilf(static_cast<float>(tempsAppuie) / static_cast<float>(utils::MICROSECONDES_PAR_SECONDE))
+            * acceleration * acceleration + debutAcceleration;
+        return utils::conversionClamp<float, int8_t>(
+            valeur,
+            minVitesse,
+            maxVitesse
+        );
+    }
+
+    float obtenirDelta(US tempsAppuie, US deltaTime) const{
+        const float valeur =
+            (static_cast<float>(tempsAppuie) / static_cast<float>(utils::MICROSECONDES_PAR_SECONDE) * acceleration + debutAcceleration)
+            * (static_cast<float>(deltaTime) / static_cast<float>(utils::MICROSECONDES_PAR_SECONDE));
+        return utils::conversionClamp<float, float>(
+            valeur,
+            minVitesse,
+            maxVitesse
+        );
+    }
+};
+
+/**
+ * Cette struct représente l'état de la manette pour une itération de la boucle
+ * `loop` principale du programme.
+ */
+struct ControleManette {
+    int8_t joystick1x = 0;
+    int8_t joystick1y = 0;
+    int8_t joystick2x = 0;
+
+    int8_t gachetteGauche = 0;
+    int8_t gachetteDroite = 0;
+
+    US tempsDepuisDernierAppuieA = 0;
+    bool a = false;
+    US tempsDepuisDernierAppuieB = 0;
+    bool b = false;
+    US tempsDepuisDernierAppuieX = 0;
+    bool x = false;
+    US tempsDepuisDernierAppuieY = 0;
+    bool y = false;
+
+    bool start = false;
+
+    /**
+     * Lire l'état de la manette.
+     */
+    void lire(US deltaTime) {
+        joystick1x = CrcLib::ReadAnalogChannel(ANALOG::JOYSTICK1_X);
+        joystick1y = CrcLib::ReadAnalogChannel(ANALOG::JOYSTICK1_Y);
+        if(joystick1y == -1) joystick1y = 0; // correction fucké de la précision.
+        joystick2x = CrcLib::ReadAnalogChannel(ANALOG::JOYSTICK2_X);
+
+        const int8_t gachetteGaucheLecture = CrcLib::ReadAnalogChannel(ANALOG::GACHETTE_L);
+        const int8_t gachetteDroiteLecture = CrcLib::ReadAnalogChannel(ANALOG::GACHETTE_R);
+        gachetteGauche = utils::map<int8_t>(gachetteGaucheLecture, -128, 127, 0, 127);
+        gachetteDroite = utils::map<int8_t>(gachetteDroiteLecture, -128, 127, 0, 127);
+    
+
+        start = CrcLib::ReadDigitalChannel(BUTTON::START);
+    }
+
+    void print() const{
+        SERIAL_PRINT("joystick1x : ");
+        SERIAL_PRINTLN(joystick1x);
+        SERIAL_PRINT("joystick1y : ");
+        SERIAL_PRINTLN(joystick1y);
+        SERIAL_PRINT("joystick2x : ");
+        SERIAL_PRINTLN(joystick2x);
+
+        SERIAL_PRINT("gachetteGauche : ");
+        SERIAL_PRINTLN(gachetteGauche);
+        SERIAL_PRINT("gachetteDroite : ");
+        SERIAL_PRINTLN(gachetteDroite);
+        SERIAL_PRINTLN("");
+    }
+};
+static ControleManette controleManette;
+
+/**
+ * Donne un mapping de vitesse exponentiel.
+ * La valeur 0.00788f a été choisie avec l'aide de Desmos pour que 127 de
+ * valeurManette donne 127 comme résultat.
+ * LA FONCTION DOIT ÊTRE TESTÉ PARCE QUE J'AI PAS ACCÈS AU ROBOT.
+ * Vous pouvez ajuster
+ */
+int8_t mappingVitesseAnalogue(int8_t valeurManette){
+    float valeurManetteF = static_cast<float>(valeurManette);
+    return utils::conversionClamp<float, int8_t>(
+        0.00788f * valeurManetteF * abs(valeurManetteF),
+        -128,
+        127
+    );
+}
+
+Actions Actions::lire(US deltaTime)
+{
+    controleManette.lire(deltaTime);
+    //controleManette.print();
+    Actions actions;
+
+    actions.avant = mappingVitesseAnalogue(controleManette.joystick1y);
+    actions.lacet = mappingVitesseAnalogue(controleManette.joystick2x);
+    actions.lateral = mappingVitesseAnalogue(controleManette.joystick1x);
+
+    actions.translation = mappingVitesseAnalogue(
+        utils::conversionClamp<int16_t, int8_t>(
+            controleManette.gachetteDroite - controleManette.gachetteGauche,
+            -128,
+            127
+        )
+    );
+
+    return actions;
+}
+
+/**
+ * Affiche la struct dans le moniteur de série
+ */
+void Actions::print() const{
+    SERIAL_PRINT("avant             : ");
+    SERIAL_PRINTLN(avant);
+    SERIAL_PRINT("lacet               : ");
+    SERIAL_PRINTLN(lacet);
+
+    SERIAL_PRINTLN("");
+}
